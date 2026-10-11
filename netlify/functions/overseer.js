@@ -14,7 +14,7 @@ export default async (req, context) => {
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
     const xaiKey = process.env.XAI_API_KEY;
 
-    // Fetch helper for calling AI APIs safely
+    // Helper to safely fetch from AI APIs
     const fetchAI = async (url, headers, body, extractFn) => {
       try {
         const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
@@ -30,7 +30,7 @@ export default async (req, context) => {
       }
     };
 
-    // 1. Fetch ChatGPT Response if key is set
+    // 1. ChatGPT call (using gpt-4o-mini for free/standard tier keys)
     const chatgptPromise = openAiKey ? fetchAI(
       'https://api.openai.com/v1/chat/completions',
       { 
@@ -38,13 +38,13 @@ export default async (req, context) => {
         'Content-Type': 'application/json' 
       },
       { 
-        model: 'gpt-4o', 
+        model: 'gpt-4o-mini', 
         messages: [{ role: 'user', content: prompt }] 
       },
       (d) => d?.choices?.[0]?.message?.content
     ) : null;
 
-    // 2. Fetch Claude Response if key is set
+    // 2. Claude call (if key exists)
     const claudePromise = anthropicKey ? fetchAI(
       'https://api.anthropic.com/v1/messages',
       { 
@@ -62,21 +62,17 @@ export default async (req, context) => {
 
     const [chatgptRes, claudeRes] = await Promise.all([chatgptPromise, claudePromise]);
 
-    // 3. Synthesis & Failover Logic
+    // 3. Output Resolution
     let finalAnswer = "";
 
     if (chatgptRes && claudeRes) {
-      // Both active: Synthesize combined output
       finalAnswer = `[Overseer Multi-LLM Synthesis]\n\n${chatgptRes}`;
     } else if (chatgptRes) {
-      // ChatGPT active: Deliver direct live AI response
       finalAnswer = chatgptRes;
     } else if (claudeRes) {
-      // Claude active: Deliver direct live AI response
       finalAnswer = claudeRes;
     } else {
       // OFFLINE BACKUP OVERSEER ENGINE
-      // Answers math or provides local direct responses for all questions
       const mathMatch = prompt.match(/(\d+)\s*([\+\-\*\/])\s*(\d+)/) || 
                         prompt.toLowerCase().match(/(\d+)\s*(plus|minus|times|divided by)\s*(\d+)/);
 
@@ -93,7 +89,7 @@ export default async (req, context) => {
 
         finalAnswer = `[Overseer Standalone Engine]: ${num1} ${op} ${num2} equals ${result}.`;
       } else {
-        finalAnswer = `[Overseer Standalone Engine]: Direct backup response to "${prompt}". Clear cache and trigger a new deploy in Netlify to connect live ChatGPT responses.`;
+        finalAnswer = `[Overseer Standalone Engine]: Direct response to "${prompt}". Connect your API keys in Netlify to enable real-time multi-LLM processing.`;
       }
     }
 
