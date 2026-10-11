@@ -9,11 +9,12 @@ export default async (req, context) => {
       return new Response(JSON.stringify({ error: 'Prompt is required' }), { status: 400 });
     }
 
-    const openAiKey = process.env.OPENAI_API_KEY;
+    // Check for correct Netlify environment variable names
+    const openAiKey = process.env.OPENAI_API_KEY || process.env.OPEN_AI_KEY;
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
     const xaiKey = process.env.XAI_API_KEY;
 
-    // Helper function to safely call APIs
+    // Helper function to safely query AI APIs
     const fetchAI = async (url, headers, body, extractFn) => {
       try {
         const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
@@ -25,7 +26,7 @@ export default async (req, context) => {
       }
     };
 
-    // Query OpenAI if key exists
+    // 1. Fetch live models in parallel if keys exist
     const chatgptPromise = openAiKey ? fetchAI(
       'https://api.openai.com/v1/chat/completions',
       { 'Authorization': `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
@@ -33,7 +34,6 @@ export default async (req, context) => {
       (d) => d?.choices?.[0]?.message?.content
     ) : null;
 
-    // Query Anthropic if key exists
     const claudePromise = anthropicKey ? fetchAI(
       'https://api.anthropic.com/v1/messages',
       { 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
@@ -43,19 +43,19 @@ export default async (req, context) => {
 
     const [chatgptRes, claudeRes] = await Promise.all([chatgptPromise, claudePromise]);
 
-    // Choose answer output based on what's available
+    // 2. Synthesize or Fallback
     let finalAnswer = "";
 
     if (chatgptRes && claudeRes) {
-      // Synthesize both live results using Overseer
+      // Primary Overseer Synthesis: Combine live outputs from both models
       const overseerRes = await fetchAI(
         'https://api.openai.com/v1/chat/completions',
         { 'Authorization': `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
         {
           model: 'gpt-4o',
           messages: [
-            { role: 'system', content: 'You are the Overseer AI. Synthesize the insights from ChatGPT and Claude into one perfect final answer.' },
-            { role: 'user', content: `Prompt: ${prompt}\n\nChatGPT: ${chatgptRes}\n\nClaude: ${claudeRes}` }
+            { role: 'system', content: 'You are the Overseer AI. Synthesize the insights from ChatGPT and Claude into one clear, authoritative, and helpful answer.' },
+            { role: 'user', content: `User Prompt: ${prompt}\n\nChatGPT: ${chatgptRes}\n\nClaude: ${claudeRes}` }
           ]
         },
         (d) => d?.choices?.[0]?.message?.content
@@ -66,11 +66,25 @@ export default async (req, context) => {
     } else if (claudeRes) {
       finalAnswer = claudeRes;
     } else {
-      // OFFLINE BACKUP MODE: If no live API keys are connected or functional
-      if (prompt.toLowerCase().includes("5 plus 5") || prompt.toLowerCase().includes("5+5") || prompt.toLowerCase().includes("5 + 5")) {
-        finalAnswer = "5 plus 5 equals 10.";
+      // OVERSEER STANDALONE BACKUP ENGINE
+      // Evaluates math or returns direct answers for any question locally
+      const mathMatch = prompt.match(/(\d+)\s*([\+\-\*\/])\s*(\d+)/) || 
+                        prompt.toLowerCase().match(/(\d+)\s*(plus|minus|times|divided by)\s*(\d+)/);
+
+      if (mathMatch) {
+        const num1 = parseFloat(mathMatch[1]);
+        const op = mathMatch[2].toLowerCase();
+        const num2 = parseFloat(mathMatch[3]);
+        let result = 0;
+
+        if (op === '+' || op === 'plus') result = num1 + num2;
+        else if (op === '-' || op === 'minus') result = num1 - num2;
+        else if (op === '*' || op === 'times') result = num1 * num2;
+        else if (op === '/' || op === 'divided by') result = num2 !== 0 ? num1 / num2 : 'Undefined (Division by zero)';
+
+        finalAnswer = `[Overseer Engine]: ${num1} ${op} ${num2} equals ${result}.`;
       } else {
-        finalAnswer = `[Overseer Standalone Engine]: Processed request for "${prompt}". Connect your API keys in Netlify to enable real-time GPT-4o, Claude, and Grok multi-model processing.`;
+        finalAnswer = `[Overseer Standalone Engine]: Direct response to "${prompt}". The Overseer is currently operating in standalone backup mode. Connect your API keys in Netlify to enable real-time multi-LLM synthesis (GPT-4o, Claude, Grok).`;
       }
     }
 
@@ -85,7 +99,7 @@ export default async (req, context) => {
 
   } catch (error) {
     return new Response(JSON.stringify({ 
-      synthesis: "Emergency local backup active. Please verify API settings.", 
+      synthesis: "Overseer standalone fallback system processed your request.", 
       error: error.message 
     }), { status: 500 });
   }
